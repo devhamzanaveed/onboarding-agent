@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  slackId   String   @unique
+  name      String
+  role      String
+  createdAt DateTime @default(now())
+
+  onboardingPlan OnboardingPlan?
+}
+
+model OnboardingPlan {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id])
+  totalDays  Int      @default(7)
+  currentDay Int      @default(1)
+  createdAt  DateTime @default(now())
+
+  tasks Task[]
+}
+
+model Task {
+  id          String   @id @default(uuid())
+  planId      String
+  plan        OnboardingPlan @relation(fields: [planId], references: [id])
+  day         Int
+  title       String
+  description String
+  resources   Json     @default("[]")
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([planId, day])
+}
+
+model Document {
+  id         String   @id @default(uuid())
+  filename   String
+  mimeType   String
+  rawText    String
+  uploadedBy String
+  createdAt  DateTime @default(now())
+
+  chunks DocumentChunk[]
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content    String
+  chunkIndex Int
+  // embedding vector(1536) added via raw SQL migration (Prisma has no native vector type)
+
+  @@index([documentId])
+}
