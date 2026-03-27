@@ -25,6 +25,7 @@ export class SlackService implements OnModuleInit {
 
   async onModuleInit() {
     this.registerCommands();
+    this.registerActions();
     this.registerEvents();
     await this.bolt.start();
     this.logger.log('Slack bot connected (socket mode)');
@@ -87,21 +88,93 @@ export class SlackService implements OnModuleInit {
         await respond('❌ Something went wrong. Please try again.');
       }
     });
+
+    // /progress — show completion stats
+    this.bolt.command('/progress', async ({ command, ack, respond }) => {
+      await ack();
+
+      try {
+        const progress = await this.onboarding.getProgress(command.user_id);
+
+        if (!progress) {
+          await respond('⚠️ No onboarding plan found. Run `/start-onboarding [role]` first.');
+          return;
+        }
+
+        await respond({
+          blocks: this.formatProgressMessage(progress),
+          text: `Progress: ${progress.percent}%`,
+        });
+      } catch (error) {
+        this.logger.error('Failed to get progress', error);
+        await respond('❌ Something went wrong. Please try again.');
+      }
+    });
+
+    // /ask — RAG-powered Q&A with citations
+    this.bolt.command('/ask', async ({ command, ack, respond }) => {
+      await ack();
+
+      const question = command.text?.trim();
+      if (!question) {
+        await respond('⚠️ Please provide a question. Usage: `/ask How do I set up my dev environment?`');
+        return;
+      }
+
+      await respond(`🔍 Searching knowledge base...`);
+
+      try {
+        const result = await this.onboarding.askQuestion(question);
+
+        await respond({
+          blocks: this.formatAnswerMessage(question, result.answer, result.citations),
+          text: result.answer,
+        });
+      } catch (error) {
+        this.logger.error('Failed to answer question', error);
+        await respond('❌ Something went wrong. Please try again.');
+      }
+    });
+  }
+
+  /** Handle interactive button clicks */
+  private registerActions() {
+    this.bolt.action('complete_task', async ({ action, ack, body, client }) => {
+      await ack();
+
+      const taskId = (action as any).value;
+      const slackId = body.user.id;
+
+      try {
+        const result = await this.onboarding.toggleTask(taskId, slackId);
+        if (!result) return;
+
+        // Update the original message with new task states
+        const blocks = this.formatDayMessage(result.day, result.totalDays, result.dayTasks);
+        const messageBody = body as any;
+
+        await client.chat.update({
+          channel: messageBody.channel?.id ?? messageBody.container?.channel_id,
+          ts: messageBody.message?.ts ?? messageBody.container?.message_ts,
+          blocks,
+          text: `Day ${result.day} tasks`,
+        });
+      } catch (error) {
+        this.logger.error('Failed to toggle task', error);
+      }
+    });
   }
 
   /** Listen for file uploads via DM to ingest as knowledge */
   private registerEvents() {
-    // file_shared fires reliably for all file uploads
     this.bolt.event('file_shared', async ({ event, client }) => {
       this.logger.log(`File shared event received: ${event.file_id}`);
 
       try {
-        // Get file info from Slack API
         const fileInfo = await client.files.info({ file: event.file_id });
         const file = fileInfo.file;
         if (!file) return;
 
-        // Only process in DMs (im channels)
         const channel = event.channel_id;
         const channelInfo = await client.conversations.info({ channel });
         if (!channelInfo.channel?.is_im) return;
@@ -121,19 +194,14 @@ export class SlackService implements OnModuleInit {
           return;
         }
 
-        await client.chat.postMessage({
-          channel,
-          text: `📄 Processing *${file.name}*...`,
-        });
+        await client.chat.postMessage({ channel, text: `📄 Processing *${file.name}*...` });
 
-        // Download file from Slack
         const botToken = this.config.getOrThrow('SLACK_BOT_TOKEN');
         const downloadResponse = await fetch(file.url_private_download!, {
           headers: { Authorization: `Bearer ${botToken}` },
         });
         const buffer = Buffer.from(await downloadResponse.arrayBuffer());
 
-        // Ingest into knowledge base
         const result = await this.knowledge.ingestDocument(
           file.name!,
           file.mimetype,
@@ -158,24 +226,40 @@ export class SlackService implements OnModuleInit {
     });
   }
 
-  /** Format a task block with resources */
+  // ─── Formatters ─────────────────────────────────────────
+
+  /** Format task blocks with completion buttons and resources */
   private formatTaskBlocks(tasks: Task[]) {
     const blocks: any[] = [];
 
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
       const resources = (task.resources as any[]) ?? [];
+      const check = task.completed ? '✅' : '⬜';
+      const title = task.completed
+        ? `~${task.title}~`
+        : task.title;
 
-      // Task title + description
+      // Task with completion button
       blocks.push({
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `*${i + 1}. ${task.title}*\n${task.description}`,
+          text: `${check} *${i + 1}. ${title}*\n${task.description}`,
+        },
+        accessory: {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: task.completed ? 'Undo' : 'Done ✓',
+          },
+          action_id: 'complete_task',
+          value: task.id,
+          style: task.completed ? undefined : 'primary',
         },
       });
 
-      // Resources line under the task
+      // Resources
       if (resources.length > 0) {
         const icons: Record<string, string> = {
           doc: '📄',
@@ -188,25 +272,16 @@ export class SlackService implements OnModuleInit {
         const resourceText = resources
           .map((r: any) => {
             const icon = icons[r.type] || '📌';
-            // Format channels as Slack-style links, commands as code
-            if (r.type === 'channel' && r.label.startsWith('#')) {
-              return `${icon} ${r.label}`;
-            }
-            if (r.type === 'command') {
-              return `${icon} \`${r.label}\``;
-            }
-            if (r.type === 'link' && r.label.startsWith('http')) {
-              return `${icon} <${r.label}>`;
-            }
+            if (r.type === 'channel' && r.label.startsWith('#')) return `${icon} ${r.label}`;
+            if (r.type === 'command') return `${icon} \`${r.label}\``;
+            if (r.type === 'link' && r.label.startsWith('http')) return `${icon} <${r.label}>`;
             return `${icon} ${r.label}`;
           })
           .join('  •  ');
 
         blocks.push({
           type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: resourceText },
-          ],
+          elements: [{ type: 'mrkdwn', text: resourceText }],
         });
       }
     }
@@ -214,15 +289,11 @@ export class SlackService implements OnModuleInit {
     return blocks;
   }
 
-  /** Format Day 1 tasks as Slack Block Kit message */
   private formatDay1Message(name: string, role: string, tasks: Task[]) {
     return [
       {
         type: 'header' as const,
-        text: {
-          type: 'plain_text' as const,
-          text: `Welcome, ${name}! 🎉`,
-        },
+        text: { type: 'plain_text' as const, text: `Welcome, ${name}! 🎉` },
       },
       {
         type: 'section' as const,
@@ -239,22 +310,18 @@ export class SlackService implements OnModuleInit {
         elements: [
           {
             type: 'mrkdwn' as const,
-            text: "💡 You'll receive your next day's tasks automatically. Stay on track!",
+            text: "💡 Click *Done ✓* to mark tasks complete. Type `/progress` to see your stats.",
           },
         ],
       },
     ];
   }
 
-  /** Format any day's tasks as Slack Block Kit message */
   private formatDayMessage(day: number, totalDays: number, tasks: Task[]) {
     return [
       {
         type: 'header' as const,
-        text: {
-          type: 'plain_text' as const,
-          text: `📋 Day ${day} of ${totalDays}`,
-        },
+        text: { type: 'plain_text' as const, text: `📋 Day ${day} of ${totalDays}` },
       },
       { type: 'divider' as const },
       ...this.formatTaskBlocks(tasks),
@@ -271,5 +338,98 @@ export class SlackService implements OnModuleInit {
         ],
       },
     ];
+  }
+
+  /** Format progress overview */
+  private formatProgressMessage(progress: {
+    name: string;
+    role: string;
+    currentDay: number;
+    totalDays: number;
+    completedCount: number;
+    totalCount: number;
+    percent: number;
+    byDay: Array<{ day: number; completed: number; total: number }>;
+  }) {
+    const bar = this.progressBar(progress.percent);
+
+    const dayLines = progress.byDay
+      .map((d) => {
+        const dayBar = d.total > 0
+          ? `${d.completed}/${d.total}`
+          : '—';
+        const marker = d.day === progress.currentDay ? ' ← current' : '';
+        const check = d.completed === d.total && d.total > 0 ? ' ✅' : '';
+        return `Day ${d.day}: ${dayBar}${check}${marker}`;
+      })
+      .join('\n');
+
+    return [
+      {
+        type: 'header' as const,
+        text: { type: 'plain_text' as const, text: `📊 Onboarding Progress` },
+      },
+      {
+        type: 'section' as const,
+        text: {
+          type: 'mrkdwn' as const,
+          text: `*${progress.name}* — ${progress.role}\n\n${bar}  *${progress.percent}%* complete (${progress.completedCount}/${progress.totalCount} tasks)`,
+        },
+      },
+      { type: 'divider' as const },
+      {
+        type: 'section' as const,
+        text: {
+          type: 'mrkdwn' as const,
+          text: `\`\`\`\n${dayLines}\n\`\`\``,
+        },
+      },
+    ];
+  }
+
+  /** Generate a text progress bar */
+  private progressBar(percent: number): string {
+    const filled = Math.round(percent / 10);
+    const empty = 10 - filled;
+    return '█'.repeat(filled) + '░'.repeat(empty);
+  }
+
+  /** Format Q&A answer with citations */
+  private formatAnswerMessage(question: string, answer: string, citations: string[]) {
+    const blocks: any[] = [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Q: ${question}*`,
+        },
+      },
+      { type: 'divider' },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: answer,
+        },
+      },
+    ];
+
+    if (citations.length > 0) {
+      const sourceList = [...new Set(citations)]
+        .map((c) => `📄 ${c}`)
+        .join('  •  ');
+
+      blocks.push(
+        { type: 'divider' },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `*Sources:* ${sourceList}` },
+          ],
+        },
+      );
+    }
+
+    return blocks;
   }
 }

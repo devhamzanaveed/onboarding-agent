@@ -35,9 +35,10 @@ model Task {
   day         Int
   title       String
   description String
-  resources   Json     @default("[]")
-  completed   Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  resources   Json      @default("[]")
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([planId, day])
 }

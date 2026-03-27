@@ -132,6 +132,47 @@ Include 2-3 tasks per day. Each task MUST have at least 1 resource. Tasks should
     return parsed.tasks;
   }
 
+  /** Answer a question using provided context chunks, with source citations */
+  async answerWithCitations(
+    question: string,
+    chunks: Array<{ content: string; filename: string }>,
+  ): Promise<{ answer: string; citations: string[] }> {
+    const numberedContext = chunks
+      .map((c, i) => `[${i + 1}] (Source: ${c.filename})\n${c.content}`)
+      .join('\n\n---\n\n');
+
+    const response = await this.client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.3,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a helpful company assistant. Answer the question using ONLY the provided context.
+If the answer is not in the context, say so honestly.
+
+Cite your sources using [1], [2], etc. matching the source numbers provided.
+
+--- CONTEXT ---
+${numberedContext}
+--- END CONTEXT ---`,
+        },
+        { role: 'user', content: question },
+      ],
+    });
+
+    const answer = response.choices[0]?.message?.content ?? 'No answer generated.';
+
+    // Extract unique filenames that were actually cited
+    const citedNumbers = [...answer.matchAll(/\[(\d+)\]/g)].map((m) =>
+      parseInt(m[1]),
+    );
+    const citations = [...new Set(citedNumbers)]
+      .filter((n) => n >= 1 && n <= chunks.length)
+      .map((n) => chunks[n - 1].filename);
+
+    return { answer, citations };
+  }
+
   /** Generate embedding vector for a text string */
   async generateEmbedding(text: string): Promise<number[]> {
     const response = await this.client.embeddings.create({
