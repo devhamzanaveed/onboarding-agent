@@ -25,7 +25,19 @@ model OnboardingPlan {
   currentDay Int      @default(1)
   createdAt  DateTime @default(now())
 
-  tasks Task[]
+  tasks     Task[]
+  revisions PlanRevision[]
+}
+
+model PlanRevision {
+  id        String   @id @default(uuid())
+  planId    String
+  plan      OnboardingPlan @relation(fields: [planId], references: [id])
+  reason    String
+  snapshot  Json
+  createdAt DateTime @default(now())
+
+  @@index([planId])
 }
 
 model Task {

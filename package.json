@@ -7,7 +7,9 @@
   "type": "module",
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "npm run build:dashboard && nest build",
+    "build:dashboard": "cd dashboard && npm run build",
+    "build:server": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -25,6 +27,7 @@
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/serve-static": "^5.0.4",
     "@prisma/adapter-pg": "^7.5.0",
     "@prisma/client": "^7.5.0",
     "@slack/bolt": "^4.6.0",

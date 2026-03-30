@@ -1,0 +1,9 @@
+node_modules
+dashboard/node_modules
+dist
+generated
+.git
+.env
+*.log
+coverage
+.DS_Store

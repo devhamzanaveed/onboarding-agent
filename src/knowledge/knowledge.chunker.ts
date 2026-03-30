@@ -11,15 +11,15 @@ interface ChunkOptions {
   chunkOverlap?: number;
 }
 
-export function chunkText(
-  text: string,
-  options: ChunkOptions = {},
-): string[] {
+export function chunkText(text: string, options: ChunkOptions = {}): string[] {
   const maxChars = (options.chunkSize ?? DEFAULT_CHUNK_SIZE) * 4;
   const overlapChars = (options.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP) * 4;
 
   // Normalize whitespace
-  const cleaned = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const cleaned = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   if (cleaned.length <= maxChars) {
     return [cleaned];

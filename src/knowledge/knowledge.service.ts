@@ -82,10 +82,7 @@ export class KnowledgeService {
   }
 
   /** Search for similar chunks using cosine similarity */
-  async similaritySearch(
-    query: string,
-    topK = 10,
-  ): Promise<SearchResult[]> {
+  async similaritySearch(query: string, topK = 10): Promise<SearchResult[]> {
     const queryEmbedding = await this.openAi.generateEmbedding(query);
 
     const results = await this.prisma.$queryRawUnsafe<

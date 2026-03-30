@@ -1,98 +1,199 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# AI Onboarding Agent
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+An AI-powered Slack bot that generates personalized onboarding plans for new employees using RAG (Retrieval-Augmented Generation) and company knowledge.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Built with NestJS, PostgreSQL + pgvector, OpenAI, and Slack Bolt SDK.
 
-## Description
+## Features
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+**Slack Bot Commands**
+- `/start-onboarding [role]` — Generates a personalized 7-day onboarding plan using AI + company knowledge
+- `/next-day` — Advance to the next day's tasks
+- `/ask [question]` — Ask questions and get answers with source citations from company docs
+- `/progress` — View completion stats with per-day breakdown
+- `/replan` — AI regenerates remaining days based on what you completed/skipped
 
-## Project setup
+**Knowledge Ingestion (RAG)**
+- Upload PDFs, Markdown, or text files via DM to the bot
+- Documents are chunked, embedded (OpenAI `text-embedding-3-small`), and stored in pgvector
+- Onboarding plans reference your actual company tools, repos, and processes
 
-```bash
-$ npm install
+**Interactive Task Management**
+- Each task has a "Done" button — click to mark complete, message updates in-place
+- Completed tasks show with strikethrough and "Undo" option
+- Tasks include actionable resources (docs, tools, Slack channels, commands)
+
+**Adaptive Re-planning**
+- Auto-detects when an employee falls behind (< 40% completion rate)
+- Suggests replanning with a button in Slack
+- AI generates revised plan factoring in completed vs skipped tasks
+- Old plan is snapshotted before replan for audit trail
+
+**Web Dashboard**
+- Overview page with stats (total employees, active, avg progress, knowledge docs)
+- Employee table with progress bars
+- Detailed employee view with day-by-day timeline and task completion status
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                      Slack Bot                            │
+│  /start-onboarding  /next-day  /ask  /progress  /replan  │
+│  File uploads (DM) → Knowledge ingestion                  │
+└────────────────────────┬─────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────┐
+│                   NestJS Backend                          │
+│                                                           │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐  │
+│  │ SlackModule   │  │ OnboardingMod │  │ DashboardMod │  │
+│  │ Bolt SDK      │  │ Plan CRUD     │  │ REST API     │  │
+│  │ Socket Mode   │  │ Task tracking │  │ GET /api/*   │  │
+│  └──────┬───────┘  │ Replan logic  │  └──────────────┘  │
+│         │          └───────┬───────┘                      │
+│         │                  │                              │
+│  ┌──────▼──────────────────▼─────────────────────────┐   │
+│  │              OpenAI Service                        │   │
+│  │  • Plan generation (with RAG context)              │   │
+│  │  • Q&A with citations                              │   │
+│  │  • Adaptive re-planning                            │   │
+│  │  • Embeddings (text-embedding-3-small)             │   │
+│  └──────────────────────┬────────────────────────────┘   │
+│                         │                                 │
+│  ┌──────────────────────▼────────────────────────────┐   │
+│  │            Knowledge Service                       │   │
+│  │  • PDF/MD/TXT text extraction                      │   │
+│  │  • Chunking (500 tokens, overlapping)              │   │
+│  │  • Embedding + pgvector storage                    │   │
+│  │  • Cosine similarity search                        │   │
+│  └──────────────────────┬────────────────────────────┘   │
+│                         │                                 │
+│  ┌──────────────────────▼────────────────────────────┐   │
+│  │         PostgreSQL + pgvector                      │   │
+│  │  Users, OnboardingPlans, Tasks, PlanRevisions      │   │
+│  │  Documents, DocumentChunks (vector embeddings)     │   │
+│  └───────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │         React Dashboard (Vite)                     │   │
+│  │  Served via @nestjs/serve-static                   │   │
+│  └───────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
 ```
 
-## Compile and run the project
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | NestJS 11 (TypeScript, ESM) |
+| Database | PostgreSQL 16 + pgvector |
+| ORM | Prisma 7 (driver adapter pattern) |
+| AI | OpenAI GPT-4o-mini + text-embedding-3-small |
+| Interface | Slack Bolt SDK (Socket Mode) |
+| Frontend | React + Vite + TypeScript |
+| Vector Search | pgvector (HNSW index, cosine similarity) |
+
+## AI Techniques Used
+
+- **RAG (Retrieval-Augmented Generation)** — Company documents are chunked, embedded, and stored in pgvector. Relevant chunks are retrieved via cosine similarity and injected into the LLM prompt for context-aware generation.
+- **Structured Output** — OpenAI's JSON mode ensures plan generation returns typed, parseable task objects.
+- **AI Agent Pattern** — Adaptive re-planning evaluates progress and autonomously adjusts the plan based on completed vs skipped tasks.
+- **Embedding-based Search** — `text-embedding-3-small` (1536 dimensions) with HNSW indexing for sub-millisecond similarity search.
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 20+
+- PostgreSQL 16+ with [pgvector](https://github.com/pgvector/pgvector) extension
+- OpenAI API key
+- Slack workspace with a configured bot (see [Slack Setup](#slack-setup))
+
+### Quick Start (Docker)
 
 ```bash
-# development
-$ npm run start
+# Clone the repo
+git clone https://github.com/devhamzanaveed/onboarding-agent.git
+cd onboarding-agent
 
-# watch mode
-$ npm run start:dev
+# Copy env file and fill in your keys
+cp .env.example .env
 
-# production mode
-$ npm run start:prod
+# Start PostgreSQL + pgvector + app
+docker-compose up -d
+
+# Run migrations
+docker-compose exec app npx prisma migrate deploy
 ```
 
-## Run tests
+### Manual Setup
 
 ```bash
-# unit tests
-$ npm run test
+# Install dependencies
+npm install
+cd dashboard && npm install && cd ..
 
-# e2e tests
-$ npm run test:e2e
+# Set up database
+createdb onboarding_agent
+brew install pgvector  # macOS
+npx prisma migrate deploy
+npx prisma generate
 
-# test coverage
-$ npm run test:cov
+# Build dashboard
+npm run build:dashboard
+
+# Start
+npm run start:dev
 ```
 
-## Deployment
+### Slack Setup
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+1. Create a Slack App at [api.slack.com/apps](https://api.slack.com/apps)
+2. Enable **Socket Mode** — generate an App-Level Token (`xapp-...`)
+3. Add **Bot Token Scopes**: `chat:write`, `commands`, `files:read`, `im:history`, `im:read`
+4. Create **Slash Commands**: `/start-onboarding`, `/next-day`, `/ask`, `/progress`, `/replan`
+5. Enable **Event Subscriptions** — subscribe to `file_shared` bot event
+6. Enable **Interactivity**
+7. Install to workspace and copy tokens to `.env`
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Environment Variables
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```env
+DATABASE_URL="postgresql://user:password@localhost:5432/onboarding_agent"
+OPENAI_API_KEY="sk-..."
+SLACK_BOT_TOKEN="xoxb-..."
+SLACK_SIGNING_SECRET="..."
+SLACK_APP_TOKEN="xapp-..."
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## Project Structure
 
-## Resources
+```
+├── src/
+│   ├── prisma/          # Database service (Prisma 7 + pg adapter)
+│   ├── openai/          # OpenAI integration (plans, embeddings, Q&A, replan)
+│   ├── knowledge/       # RAG pipeline (chunking, ingestion, vector search)
+│   ├── onboarding/      # Core business logic (plans, tasks, progress)
+│   ├── slack/           # Slack bot (commands, buttons, file uploads)
+│   └── dashboard/       # REST API for web dashboard
+├── dashboard/           # React frontend (Vite)
+├── prisma/
+│   ├── schema.prisma    # Database schema
+│   └── migrations/      # SQL migrations (including pgvector)
+└── sample-docs/         # Example company docs for testing RAG
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+## Database Schema
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```
+User ──────── OnboardingPlan ──── Task
+                    │
+                    └──── PlanRevision (replan snapshots)
 
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Document ──── DocumentChunk (+ vector embedding)
+```
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+MIT
